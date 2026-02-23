@@ -1,0 +1,5 @@
+{
+  "name": "Smart POS & Inventory",
+  "description": "A comprehensive POS, Inventory, and Accounting system with real-time dashboards, stock alerts, and role-based access.",
+  "requestFramePermissions": []
+}
