@@ -194,9 +194,10 @@ export default function Settings() {
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Financial Settings</h3>
+        <p className="text-xs text-gray-500 mb-3">Recommended default for Nigeria POS VAT: 7.5%</p>
         <div className="flex items-end gap-4 max-w-xs">
           <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Tax Rate (%)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nigerian VAT/Tax Rate (%)</label>
             <input
               type="number"
               value={taxRate}

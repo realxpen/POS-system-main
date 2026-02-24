@@ -141,8 +141,13 @@ export function initializeDatabase() {
       date DATETIME NOT NULL,
       is_recurring INTEGER NOT NULL DEFAULT 0,
       recurring_interval TEXT,
+      vendor TEXT,
+      payment_method TEXT NOT NULL DEFAULT 'cash',
+      reference_no TEXT,
+      created_by INTEGER,
       notes TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
@@ -157,7 +162,7 @@ export function initializeDatabase() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS tax_settings (
       id INTEGER PRIMARY KEY CHECK (id = 1),
-      tax_rate REAL NOT NULL DEFAULT 10,
+      tax_rate REAL NOT NULL DEFAULT 7.5,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -266,6 +271,23 @@ export function initializeDatabase() {
   if (!hasColumn('expenses', 'recurring_interval')) {
     db.exec('ALTER TABLE expenses ADD COLUMN recurring_interval TEXT');
   }
+  if (!hasColumn('expenses', 'vendor')) {
+    db.exec('ALTER TABLE expenses ADD COLUMN vendor TEXT');
+  }
+  if (!hasColumn('expenses', 'payment_method')) {
+    db.exec("ALTER TABLE expenses ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'cash'");
+  }
+  if (!hasColumn('expenses', 'reference_no')) {
+    db.exec('ALTER TABLE expenses ADD COLUMN reference_no TEXT');
+  }
+  if (!hasColumn('expenses', 'created_by')) {
+    db.exec('ALTER TABLE expenses ADD COLUMN created_by INTEGER');
+  }
+  if (!hasColumn('expenses', 'updated_at')) {
+    // SQLite ALTER TABLE does not allow non-constant defaults like CURRENT_TIMESTAMP.
+    db.exec('ALTER TABLE expenses ADD COLUMN updated_at DATETIME');
+    db.exec("UPDATE expenses SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL");
+  }
   if (!hasColumn('transactions', 'invoice_number')) {
     db.exec('ALTER TABLE transactions ADD COLUMN invoice_number TEXT');
   }
@@ -291,12 +313,25 @@ export function initializeDatabase() {
   // Seed Tax Rate if not exists
   const taxCheck = db.prepare("SELECT value FROM settings WHERE key = 'tax_rate'").get();
   if (!taxCheck) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('tax_rate', '10')").run();
+    db.prepare("INSERT INTO settings (key, value) VALUES ('tax_rate', '7.5')").run();
   }
+
+  // Nigeria-first default migration for legacy installs that still use 10%
+  if (taxCheck && String((taxCheck as any).value) === '10') {
+    db.prepare("UPDATE settings SET value = '7.5' WHERE key = 'tax_rate'").run();
+  }
+
+  const effectiveTax = db.prepare("SELECT value FROM settings WHERE key = 'tax_rate'").get() as any;
   db.prepare(`
     INSERT OR IGNORE INTO tax_settings (id, tax_rate, updated_at)
     VALUES (1, ?, CURRENT_TIMESTAMP)
-  `).run(taxCheck ? parseFloat((taxCheck as any).value) : 10);
+  `).run(effectiveTax ? parseFloat(effectiveTax.value) : 7.5);
+
+  db.prepare(`
+    UPDATE tax_settings
+    SET tax_rate = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = 1 AND tax_rate = 10
+  `).run(effectiveTax ? parseFloat(effectiveTax.value) : 7.5);
 
   // Seed Admin User if not exists
   const adminCheck = db.prepare("SELECT id FROM users WHERE role = 'admin'").get();

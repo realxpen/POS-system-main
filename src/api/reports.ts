@@ -213,6 +213,66 @@ router.get('/financial-summary', (req, res) => {
   });
 });
 
+router.get('/revenue-module', (req, res) => {
+  const db = getDb();
+  const isAttendant = req.user?.role === 'attendant';
+  const userId = req.user?.id || 0;
+
+  const filter = isAttendant ? ' AND t.attendant_id = ?' : '';
+  const params = isAttendant ? [userId] : [];
+
+  const daily = db.prepare(`
+    SELECT COALESCE(SUM(ti.subtotal), 0) as total
+    FROM transaction_items ti
+    JOIN transactions t ON t.id = ti.transaction_id
+    WHERE date(t.created_at) = date('now')${filter}
+  `).get(...params) as any;
+
+  const monthly = db.prepare(`
+    SELECT COALESCE(SUM(ti.subtotal), 0) as total
+    FROM transaction_items ti
+    JOIN transactions t ON t.id = ti.transaction_id
+    WHERE date(t.created_at) >= date('now', 'start of month')${filter}
+  `).get(...params) as any;
+
+  const perProduct = db.prepare(`
+    SELECT
+      ti.product_id,
+      ti.product_name,
+      COALESCE(SUM(ti.quantity), 0) as quantity_sold,
+      COALESCE(SUM(ti.subtotal), 0) as revenue
+    FROM transaction_items ti
+    JOIN transactions t ON t.id = ti.transaction_id
+    WHERE date(t.created_at) >= date('now', 'start of month')${filter}
+    GROUP BY ti.product_id, ti.product_name
+    ORDER BY revenue DESC
+    LIMIT 20
+  `).all(...params);
+
+  const perAttendant = db.prepare(`
+    SELECT
+      t.attendant_id,
+      t.attendant_name,
+      COUNT(DISTINCT CASE WHEN date(t.created_at) = date('now') THEN t.id END) as transactions_today,
+      COALESCE(SUM(CASE WHEN date(t.created_at) = date('now') THEN ti.subtotal END), 0) as revenue_today,
+      COUNT(DISTINCT t.id) as transactions_month,
+      COALESCE(SUM(ti.subtotal), 0) as revenue_month
+    FROM transactions t
+    LEFT JOIN transaction_items ti ON ti.transaction_id = t.id
+    WHERE date(t.created_at) >= date('now', 'start of month')${filter}
+    GROUP BY t.attendant_id, t.attendant_name
+    ORDER BY revenue_month DESC
+  `).all(...params);
+
+  res.json({
+    formula: 'Revenue = SellingPrice * QuantitySold',
+    daily_revenue: Number(daily?.total || 0),
+    monthly_revenue: Number(monthly?.total || 0),
+    revenue_per_product: perProduct,
+    revenue_per_attendant: perAttendant,
+  });
+});
+
 router.get('/inventory-report', (req, res) => {
   const db = getDb();
   const rows = db.prepare(`

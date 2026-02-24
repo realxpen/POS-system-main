@@ -10,6 +10,21 @@ type FinancialSummary = {
   profit: { today: number; month: number };
 };
 
+type RevenueModuleData = {
+  formula: string;
+  daily_revenue: number;
+  monthly_revenue: number;
+  revenue_per_product: Array<{ product_id: number; product_name: string; quantity_sold: number; revenue: number }>;
+  revenue_per_attendant: Array<{
+    attendant_id: number;
+    attendant_name: string;
+    transactions_today: number;
+    revenue_today: number;
+    transactions_month: number;
+    revenue_month: number;
+  }>;
+};
+
 export default function Reports() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [attendantPerformance, setAttendantPerformance] = useState<any[]>([]);
@@ -18,12 +33,13 @@ export default function Reports() {
   const [profitByProduct, setProfitByProduct] = useState<any[]>([]);
   const [unsoldProducts, setUnsoldProducts] = useState<any[]>([]);
   const [creditSales, setCreditSales] = useState<any[]>([]);
+  const [revenueModule, setRevenueModule] = useState<RevenueModuleData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [txRes, perfRes, finRes, salesRes, profitProdRes, unsoldRes, creditRes] = await Promise.all([
+        const [txRes, perfRes, finRes, salesRes, profitProdRes, unsoldRes, creditRes, revenueRes] = await Promise.all([
           fetch('/api/transactions'),
           fetch('/api/reports/attendant-performance'),
           fetch('/api/reports/financial-summary'),
@@ -31,9 +47,10 @@ export default function Reports() {
           fetch('/api/reports/products/profit-analytics'),
           fetch('/api/reports/products/not-sold-30-days'),
           fetch('/api/reports/credit-sales'),
+          fetch('/api/reports/revenue-module'),
         ]);
 
-        const [txData, perfData, finData, salesChart, profitProdData, unsoldData, creditData] = await Promise.all([
+        const [txData, perfData, finData, salesChart, profitProdData, unsoldData, creditData, revenueData] = await Promise.all([
           txRes.json(),
           perfRes.json(),
           finRes.json(),
@@ -41,6 +58,7 @@ export default function Reports() {
           profitProdRes.json(),
           unsoldRes.json(),
           creditRes.json(),
+          revenueRes.json(),
         ]);
 
         setTransactions(txData);
@@ -50,6 +68,7 @@ export default function Reports() {
         setProfitByProduct(profitProdData);
         setUnsoldProducts(unsoldData);
         setCreditSales(creditData);
+        setRevenueModule(revenueData);
       } catch (error) {
         console.error('Error fetching reports:', error);
       } finally {
@@ -146,6 +165,54 @@ export default function Reports() {
                 <Line type="monotone" dataKey="total" stroke="#059669" strokeWidth={2.5} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel-card rounded-2xl overflow-hidden">
+        <div className="p-6 border-b border-gray-100">
+          <h3 className="text-lg font-semibold text-gray-900">Revenue Module</h3>
+          <p className="text-sm text-gray-500 mt-1">{revenueModule?.formula || 'Revenue = SellingPrice * QuantitySold'}</p>
+        </div>
+        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-white/70 border border-slate-200 rounded-xl p-4">
+            <p className="text-xs text-gray-500">Daily Revenue</p>
+            <p className="text-xl font-bold text-gray-900">{formatCurrency(revenueModule?.daily_revenue || 0)}</p>
+          </div>
+          <div className="bg-white/70 border border-slate-200 rounded-xl p-4">
+            <p className="text-xs text-gray-500">Monthly Revenue</p>
+            <p className="text-xl font-bold text-gray-900">{formatCurrency(revenueModule?.monthly_revenue || 0)}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 border-t border-gray-100">
+          <div className="p-4 border-r border-gray-100">
+            <h4 className="text-sm font-semibold text-gray-900 mb-3">Revenue Per Product (Month)</h4>
+            <div className="max-h-64 overflow-auto space-y-2">
+              {(revenueModule?.revenue_per_product || []).slice(0, 10).map((p) => (
+                <div key={p.product_id} className="flex justify-between text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white/70">
+                  <span className="truncate mr-2">{p.product_name} ({p.quantity_sold})</span>
+                  <span className="font-medium">{formatCurrency(p.revenue)}</span>
+                </div>
+              ))}
+              {(revenueModule?.revenue_per_product || []).length === 0 && <p className="text-sm text-gray-500">No product revenue yet.</p>}
+            </div>
+          </div>
+          <div className="p-4">
+            <h4 className="text-sm font-semibold text-gray-900 mb-3">Revenue Per Attendant</h4>
+            <div className="max-h-64 overflow-auto space-y-2">
+              {(revenueModule?.revenue_per_attendant || []).map((a) => (
+                <div key={a.attendant_id} className="border border-slate-200 rounded-lg px-3 py-2 bg-white/70">
+                  <div className="flex justify-between text-sm font-medium">
+                    <span>{a.attendant_name}</span>
+                    <span>{formatCurrency(a.revenue_month)}</span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Today: {a.transactions_today} tx / {formatCurrency(a.revenue_today)} | Month: {a.transactions_month} tx
+                  </div>
+                </div>
+              ))}
+              {(revenueModule?.revenue_per_attendant || []).length === 0 && <p className="text-sm text-gray-500">No attendant revenue yet.</p>}
+            </div>
           </div>
         </div>
       </div>
