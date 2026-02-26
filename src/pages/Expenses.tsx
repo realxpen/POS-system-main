@@ -13,6 +13,11 @@ interface Expense {
   vendor?: string | null;
   payment_method?: string | null;
   reference_no?: string | null;
+  payee_type?: 'none' | 'individual' | 'company';
+  wht_applicable?: number;
+  wht_rate?: number;
+  wht_amount?: number;
+  net_amount?: number;
   notes: string;
 }
 
@@ -26,6 +31,9 @@ const defaultForm = {
   vendor: '',
   payment_method: 'cash',
   reference_no: '',
+  payee_type: 'none',
+  wht_applicable: false,
+  wht_rate: '',
   notes: '',
 };
 
@@ -87,6 +95,9 @@ export default function Expenses() {
       vendor: expense.vendor || '',
       payment_method: expense.payment_method || 'cash',
       reference_no: expense.reference_no || '',
+      payee_type: expense.payee_type || 'none',
+      wht_applicable: Boolean(expense.wht_applicable),
+      wht_rate: expense.wht_rate != null ? String(expense.wht_rate) : '',
       notes: expense.notes || '',
     });
     setIsModalOpen(true);
@@ -183,6 +194,14 @@ export default function Expenses() {
           <p className="text-xs text-gray-500">Recurring Entries</p>
           <p className="text-xl font-bold text-gray-900">{summary?.summary?.recurring_count || 0}</p>
         </div>
+        <div className="panel-card rounded-xl p-4">
+          <p className="text-xs text-gray-500">WHT Withheld (Month)</p>
+          <p className="text-xl font-bold text-gray-900">{formatCurrency(summary?.summary?.total_wht_month || 0)}</p>
+        </div>
+        <div className="panel-card rounded-xl p-4">
+          <p className="text-xs text-gray-500">Net Vendor Payout (Month)</p>
+          <p className="text-xl font-bold text-gray-900">{formatCurrency(summary?.summary?.total_net_month || 0)}</p>
+        </div>
       </div>
 
       <div className="panel-card rounded-xl p-4 grid grid-cols-1 md:grid-cols-5 gap-3">
@@ -224,8 +243,10 @@ export default function Expenses() {
               <th className="px-4 py-3">Recurring</th>
               <th className="px-4 py-3">Vendor / Ref</th>
               <th className="px-4 py-3">Payment</th>
+              <th className="px-4 py-3">WHT</th>
               <th className="px-4 py-3">Notes</th>
               <th className="px-4 py-3 text-right">Amount</th>
+              <th className="px-4 py-3 text-right">Net</th>
               <th className="px-4 py-3 text-center">Actions</th>
             </tr>
           </thead>
@@ -241,8 +262,12 @@ export default function Expenses() {
                   <div>{expense.reference_no || '-'}</div>
                 </td>
                 <td className="px-4 py-3 text-xs capitalize text-gray-600">{expense.payment_method || 'cash'}</td>
+                <td className="px-4 py-3 text-xs text-gray-600">
+                  {expense.wht_applicable ? `${expense.wht_rate || 0}% (${formatCurrency(expense.wht_amount || 0)})` : '-'}
+                </td>
                 <td className="px-4 py-3 text-gray-500 truncate max-w-xs">{expense.notes}</td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency(expense.amount)}</td>
+                <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency(expense.net_amount ?? expense.amount)}</td>
                 <td className="px-4 py-3 text-center">
                   <div className="flex justify-center gap-2">
                     <button onClick={() => openEdit(expense)} className="p-1 text-gray-400 hover:text-indigo-600 transition-colors">
@@ -257,7 +282,7 @@ export default function Expenses() {
             ))}
             {expenses.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={11} className="px-6 py-8 text-center text-gray-500">
                   No expenses recorded for selected filters.
                 </td>
               </tr>
@@ -316,11 +341,27 @@ export default function Expenses() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Reference No (Optional)</label>
                   <input type="text" value={formData.reference_no} onChange={e => setFormData({ ...formData, reference_no: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Payee Type</label>
+                  <select value={formData.payee_type} onChange={e => setFormData({ ...formData, payee_type: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                    <option value="none">None</option>
+                    <option value="individual">Individual</option>
+                    <option value="company">Company</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">WHT Rate % (optional override)</label>
+                  <input type="number" min="0" step="0.01" value={formData.wht_rate} onChange={e => setFormData({ ...formData, wht_rate: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <label className="flex items-center gap-2 text-sm text-gray-700">
                   <input type="checkbox" checked={formData.is_recurring} onChange={(e) => setFormData({ ...formData, is_recurring: e.target.checked })} />
                   Recurring Expense
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input type="checkbox" checked={formData.wht_applicable} onChange={(e) => setFormData({ ...formData, wht_applicable: e.target.checked })} />
+                  Apply WHT
                 </label>
                 <select
                   disabled={!formData.is_recurring}

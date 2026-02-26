@@ -46,7 +46,7 @@ router.get('/:id', (req, res) => {
 });
 
 router.post('/', (req, res) => {
-  const { customer_name, customer_id, items, payment_method, tax_rate, branch_id, amount_paid, due_date } = req.body;
+  const { customer_name, customer_id, items, payment_method, tax_rate, prices_include_vat, branch_id, amount_paid, due_date } = req.body;
   const db = getDb();
   const user = req.user!;
 
@@ -55,23 +55,63 @@ router.post('/', (req, res) => {
   }
 
   const createTransaction = db.transaction(() => {
-    let subtotal = 0;
+    const isVatInclusive = prices_include_vat !== false;
+    let subtotalExclusive = 0;
+    let totalInclusive = 0;
     
     // Calculate subtotal and verify stock
     for (const item of items) {
       const product = db.prepare('SELECT * FROM products WHERE id = ?').get(item.product_id) as any;
       if (!product) throw new Error(`Product ${item.product_id} not found`);
       if (product.quantity < item.quantity) throw new Error(`Insufficient stock for ${product.name}`);
-      
-      subtotal += product.selling_price * item.quantity;
+
+      const priceType = String(item.price_type || 'standard');
+      const unitPrice =
+        priceType === 'safe'
+          ? Number(product.safe_price ?? product.selling_price)
+          : priceType === 'premium'
+            ? Number(product.premium_price ?? product.selling_price)
+            : Number(product.standard_price ?? product.selling_price);
+
+      // Check ingredient/material availability for recipe-based products
+      const recipeRows = db.prepare(`
+        SELECT material_id, quantity_required
+        FROM product_recipes
+        WHERE product_id = ?
+      `).all(item.product_id) as any[];
+      for (const recipe of recipeRows) {
+        const mat = db.prepare('SELECT id, name, quantity FROM materials WHERE id = ?').get(recipe.material_id) as any;
+        if (!mat) throw new Error(`Missing material #${recipe.material_id} for ${product.name}`);
+        const requiredQty = Number(recipe.quantity_required) * Number(item.quantity);
+        if (Number(mat.quantity) < requiredQty) {
+          throw new Error(`Insufficient ingredient ${mat.name} for ${product.name}`);
+        }
+      }
     }
 
     const configuredTax = db.prepare('SELECT tax_rate FROM tax_settings WHERE id = 1').get() as any;
     const effectiveTaxRate = Number.isFinite(Number(tax_rate))
       ? Number(tax_rate)
       : Number(configuredTax?.tax_rate || 0);
-    const tax_amount = subtotal * (effectiveTaxRate / 100);
-    const total_amount = subtotal + tax_amount;
+
+    for (const item of items) {
+      const product = db.prepare('SELECT * FROM products WHERE id = ?').get(item.product_id) as any;
+      const priceType = String(item.price_type || 'standard');
+      const baseUnitPrice =
+        priceType === 'safe'
+          ? Number(product.safe_price ?? product.selling_price)
+          : priceType === 'premium'
+            ? Number(product.premium_price ?? product.selling_price)
+            : Number(product.standard_price ?? product.selling_price);
+
+      const chargedUnitPrice = isVatInclusive ? baseUnitPrice * (1 + effectiveTaxRate / 100) : baseUnitPrice;
+      const lineTotal = chargedUnitPrice * item.quantity;
+      totalInclusive += lineTotal;
+      subtotalExclusive += isVatInclusive ? lineTotal / (1 + effectiveTaxRate / 100) : lineTotal;
+    }
+
+    const tax_amount = totalInclusive - subtotalExclusive;
+    const total_amount = totalInclusive;
     const invoiceNumber = makeInvoiceNumber();
 
     const resolvedBranchId = Number(branch_id || user.branch_id || 1);
@@ -97,7 +137,7 @@ router.post('/', (req, res) => {
     const info = stmt.run(
       invoiceNumber,
       customer_name || 'Walk-in Customer',
-      subtotal,
+      subtotalExclusive,
       tax_amount,
       total_amount,
       payment_method,
@@ -134,7 +174,15 @@ router.post('/', (req, res) => {
 
     for (const item of items) {
       const product = db.prepare('SELECT * FROM products WHERE id = ?').get(item.product_id) as any;
-      insertItem.run(transactionId, item.product_id, product.name, item.quantity, product.selling_price, product.selling_price * item.quantity);
+      const priceType = String(item.price_type || 'standard');
+      const unitPrice =
+        priceType === 'safe'
+          ? Number(product.safe_price ?? product.selling_price)
+          : priceType === 'premium'
+            ? Number(product.premium_price ?? product.selling_price)
+            : Number(product.standard_price ?? product.selling_price);
+      const chargedUnitPrice = isVatInclusive ? unitPrice * (1 + effectiveTaxRate / 100) : unitPrice;
+      insertItem.run(transactionId, item.product_id, product.name, item.quantity, chargedUnitPrice, chargedUnitPrice * item.quantity);
       updateStock.run(item.quantity, item.product_id);
       insertStockLog.run(
         item.product_id,
@@ -144,9 +192,34 @@ router.post('/', (req, res) => {
         transactionId,
         `Sold via ${invoiceNumber}`,
       );
+
+      // Consume recipe materials per sold quantity
+      const recipeRows = db.prepare(`
+        SELECT material_id, quantity_required
+        FROM product_recipes
+        WHERE product_id = ?
+      `).all(item.product_id) as any[];
+      for (const recipe of recipeRows) {
+        const material = db.prepare('SELECT id, quantity FROM materials WHERE id = ?').get(recipe.material_id) as any;
+        if (!material) continue;
+        const useQty = Number(recipe.quantity_required) * Number(item.quantity);
+        db.prepare('UPDATE materials SET quantity = quantity - ? WHERE id = ?').run(useQty, recipe.material_id);
+        db.prepare(`
+          INSERT INTO material_logs (
+            material_id, change_type, quantity_before, quantity_changed, quantity_after, reference_type, reference_id, notes
+          ) VALUES (?, 'sale_usage', ?, ?, ?, 'transaction', ?, ?)
+        `).run(
+          recipe.material_id,
+          material.quantity,
+          -useQty,
+          Number(material.quantity) - useQty,
+          transactionId,
+          `Used for sale ${invoiceNumber} (${product.name})`,
+        );
+      }
     }
 
-    db.prepare(`
+    const invoiceInfo = db.prepare(`
       INSERT INTO invoices (
         invoice_number,
         transaction_id,
@@ -165,7 +238,7 @@ router.post('/', (req, res) => {
       user.id,
       user.full_name,
       payment_method,
-      subtotal,
+      subtotalExclusive,
       tax_amount,
       total_amount,
     );
@@ -188,12 +261,27 @@ router.post('/', (req, res) => {
       );
     }
 
-    return { transactionId, invoiceNumber, taxRate: effectiveTaxRate, subtotal, tax_amount, total_amount };
+    return {
+      transactionId,
+      invoiceId: Number(invoiceInfo.lastInsertRowid),
+      invoiceNumber,
+      taxRate: effectiveTaxRate,
+      subtotal: subtotalExclusive,
+      tax_amount,
+      total_amount,
+      prices_include_vat: isVatInclusive,
+    };
   });
 
   try {
     const result = createTransaction();
-    res.json({ success: true, id: result.transactionId, invoice_number: result.invoiceNumber, summary: result });
+    res.json({
+      success: true,
+      id: result.transactionId,
+      invoice_id: result.invoiceId,
+      invoice_number: result.invoiceNumber,
+      summary: result,
+    });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }

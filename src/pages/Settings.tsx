@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trash2, UserPlus, Save, Plus } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
 
 interface User {
   id: number;
@@ -26,7 +27,25 @@ interface Product {
 }
 
 export default function Settings() {
-  const [taxRate, setTaxRate] = useState('');
+  const { mode, resolvedTheme, setMode } = useTheme();
+  const [vatRate, setVatRate] = useState('');
+  const [payeRate, setPayeRate] = useState('10');
+  const [payeBracketsJson, setPayeBracketsJson] = useState('');
+  const [whtIndividualRate, setWhtIndividualRate] = useState('5');
+  const [whtCompanyRate, setWhtCompanyRate] = useState('10');
+  const [citSmallTurnoverMax, setCitSmallTurnoverMax] = useState('25000000');
+  const [citMediumTurnoverMax, setCitMediumTurnoverMax] = useState('100000000');
+  const [citSmallRate, setCitSmallRate] = useState('0');
+  const [citMediumRate, setCitMediumRate] = useState('20');
+  const [citLargeRate, setCitLargeRate] = useState('30');
+  const [taxReminderDaysBefore, setTaxReminderDaysBefore] = useState('7');
+  const [monthlyVatDueDay, setMonthlyVatDueDay] = useState('21');
+  const [monthlyPayeDueDay, setMonthlyPayeDueDay] = useState('10');
+  const [monthlyWhtDueDay, setMonthlyWhtDueDay] = useState('21');
+  const [annualTaxReturnMonth, setAnnualTaxReturnMonth] = useState('3');
+  const [annualTaxReturnDay, setAnnualTaxReturnDay] = useState('31');
+  const [citFyEndMonth, setCitFyEndMonth] = useState('12');
+  const [citFyEndDay, setCitFyEndDay] = useState('31');
   const [users, setUsers] = useState<User[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -38,7 +57,19 @@ export default function Settings() {
   const [newBranch, setNewBranch] = useState({ name: '', code: '', address: '' });
   const [newSupplier, setNewSupplier] = useState({ name: '', email: '', phone: '', address: '', contact_person: '' });
   const [newCustomer, setNewCustomer] = useState({ full_name: '', email: '', phone: '', address: '' });
-  const [newPo, setNewPo] = useState({ supplier_id: '', product_id: '', quantity: '', unit_cost: '', notes: '' });
+  const [newPo, setNewPo] = useState({
+    supplier_id: '',
+    product_id: '',
+    quantity: '',
+    unit_cost: '',
+    notes: '',
+    vat_charged: true,
+    vat_rate: '7.5',
+    input_vat_amount: '',
+    supplier_vat_invoice_no: '',
+    supplier_tin: '',
+    is_claimable_input_vat: true,
+  });
 
   const fetchAll = async () => {
     const [taxRes, userRes, branchRes, supplierRes, customerRes, productRes, poRes] = await Promise.all([
@@ -59,7 +90,24 @@ export default function Settings() {
       productRes.json(),
       poRes.json(),
     ]);
-    setTaxRate(String(taxData.tax_rate || ''));
+    setVatRate(String(taxData.vat_rate ?? taxData.tax_rate ?? ''));
+    setPayeRate(String(taxData.paye_rate ?? '10'));
+    setPayeBracketsJson(String(taxData.paye_brackets_json ?? ''));
+    setWhtIndividualRate(String(taxData.wht_individual_rate ?? '5'));
+    setWhtCompanyRate(String(taxData.wht_company_rate ?? '10'));
+    setCitSmallTurnoverMax(String(taxData.cit_small_turnover_max ?? '25000000'));
+    setCitMediumTurnoverMax(String(taxData.cit_medium_turnover_max ?? '100000000'));
+    setCitSmallRate(String(taxData.cit_small_rate ?? '0'));
+    setCitMediumRate(String(taxData.cit_medium_rate ?? '20'));
+    setCitLargeRate(String(taxData.cit_large_rate ?? '30'));
+    setTaxReminderDaysBefore(String(taxData.tax_reminder_days_before ?? '7'));
+    setMonthlyVatDueDay(String(taxData.monthly_vat_due_day ?? '21'));
+    setMonthlyPayeDueDay(String(taxData.monthly_paye_due_day ?? '10'));
+    setMonthlyWhtDueDay(String(taxData.monthly_wht_due_day ?? '21'));
+    setAnnualTaxReturnMonth(String(taxData.annual_tax_return_month ?? '3'));
+    setAnnualTaxReturnDay(String(taxData.annual_tax_return_day ?? '31'));
+    setCitFyEndMonth(String(taxData.cit_fy_end_month ?? '12'));
+    setCitFyEndDay(String(taxData.cit_fy_end_day ?? '31'));
     setUsers(userData);
     setBranches(branchData);
     setSuppliers(supplierData);
@@ -72,13 +120,33 @@ export default function Settings() {
     fetchAll();
   }, []);
 
-  const saveTaxRate = async () => {
+  const saveTaxSettings = async () => {
     await fetch('/api/reports/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tax_rate: taxRate }),
+      body: JSON.stringify({
+        vat_rate: vatRate,
+        tax_rate: vatRate,
+        paye_rate: payeRate,
+        paye_brackets_json: payeBracketsJson,
+        wht_individual_rate: whtIndividualRate,
+        wht_company_rate: whtCompanyRate,
+        cit_small_turnover_max: citSmallTurnoverMax,
+        cit_medium_turnover_max: citMediumTurnoverMax,
+        cit_small_rate: citSmallRate,
+        cit_medium_rate: citMediumRate,
+        cit_large_rate: citLargeRate,
+        tax_reminder_days_before: taxReminderDaysBefore,
+        monthly_vat_due_day: monthlyVatDueDay,
+        monthly_paye_due_day: monthlyPayeDueDay,
+        monthly_wht_due_day: monthlyWhtDueDay,
+        annual_tax_return_month: annualTaxReturnMonth,
+        annual_tax_return_day: annualTaxReturnDay,
+        cit_fy_end_month: citFyEndMonth,
+        cit_fy_end_day: citFyEndDay,
+      }),
     });
-    alert('Tax rate updated!');
+    alert('Tax settings updated!');
   };
 
   const addUser = async (e: React.FormEvent) => {
@@ -165,10 +233,28 @@ export default function Settings() {
         supplier_id: Number(newPo.supplier_id),
         items: [{ product_id: Number(newPo.product_id), quantity: Number(newPo.quantity), unit_cost: Number(newPo.unit_cost) }],
         notes: newPo.notes,
+        vat_charged: newPo.vat_charged,
+        vat_rate: Number(newPo.vat_rate || 7.5),
+        input_vat_amount: newPo.input_vat_amount ? Number(newPo.input_vat_amount) : null,
+        supplier_vat_invoice_no: newPo.supplier_vat_invoice_no || null,
+        supplier_tin: newPo.supplier_tin || null,
+        is_claimable_input_vat: newPo.is_claimable_input_vat,
       }),
     });
     if (res.ok) {
-      setNewPo({ supplier_id: '', product_id: '', quantity: '', unit_cost: '', notes: '' });
+      setNewPo({
+        supplier_id: '',
+        product_id: '',
+        quantity: '',
+        unit_cost: '',
+        notes: '',
+        vat_charged: true,
+        vat_rate: '7.5',
+        input_vat_amount: '',
+        supplier_vat_invoice_no: '',
+        supplier_tin: '',
+        is_claimable_input_vat: true,
+      });
       fetchAll();
     } else {
       const data = await res.json();
@@ -193,22 +279,103 @@ export default function Settings() {
       </div>
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Financial Settings</h3>
-        <p className="text-xs text-gray-500 mb-3">Recommended default for Nigeria POS VAT: 7.5%</p>
-        <div className="flex items-end gap-4 max-w-xs">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Nigerian VAT/Tax Rate (%)</label>
-            <input
-              type="number"
-              value={taxRate}
-              onChange={(e) => setTaxRate(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Tax & Finance Settings (Nigeria)</h3>
+        <p className="text-xs text-gray-500 mb-3">Split tax config for VAT (sales), PAYE estimate (payroll), and CIT estimate (annual taxable profit). Nigeria default VAT is 7.5%.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 items-end">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">VAT Rate (%)</label>
+            <input type="number" value={vatRate} onChange={(e) => setVatRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">PAYE Est. Rate (%)</label>
+            <input type="number" value={payeRate} onChange={(e) => setPayeRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">WHT Individual Rate (%)</label>
+            <input type="number" value={whtIndividualRate} onChange={(e) => setWhtIndividualRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">WHT Company Rate (%)</label>
+            <input type="number" value={whtCompanyRate} onChange={(e) => setWhtCompanyRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">CIT Small Rate (%)</label>
+            <input type="number" value={citSmallRate} onChange={(e) => setCitSmallRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">CIT Medium Rate (%)</label>
+            <input type="number" value={citMediumRate} onChange={(e) => setCitMediumRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">CIT Large Rate (%)</label>
+            <input type="number" value={citLargeRate} onChange={(e) => setCitLargeRate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div className="xl:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">PAYE Brackets JSON (Progressive)</label>
+            <textarea
+              value={payeBracketsJson}
+              onChange={(e) => setPayeBracketsJson(e.target.value)}
+              rows={3}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-xs"
             />
           </div>
-          <button onClick={saveTaxRate} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Small Turnover Max (NGN)</label>
+            <input type="number" value={citSmallTurnoverMax} onChange={(e) => setCitSmallTurnoverMax(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Medium Turnover Max (NGN)</label>
+            <input type="number" value={citMediumTurnoverMax} onChange={(e) => setCitMediumTurnoverMax(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Reminder Days Before Due</label>
+            <input type="number" value={taxReminderDaysBefore} onChange={(e) => setTaxReminderDaysBefore(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">VAT Due Day (Monthly)</label>
+            <input type="number" value={monthlyVatDueDay} onChange={(e) => setMonthlyVatDueDay(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">PAYE Due Day (Monthly)</label>
+            <input type="number" value={monthlyPayeDueDay} onChange={(e) => setMonthlyPayeDueDay(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">WHT Due Day (Monthly)</label>
+            <input type="number" value={monthlyWhtDueDay} onChange={(e) => setMonthlyWhtDueDay(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Annual Return Month</label>
+            <input type="number" value={annualTaxReturnMonth} onChange={(e) => setAnnualTaxReturnMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Annual Return Day</label>
+            <input type="number" value={annualTaxReturnDay} onChange={(e) => setAnnualTaxReturnDay(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">CIT FY End Month</label>
+            <input type="number" value={citFyEndMonth} onChange={(e) => setCitFyEndMonth(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">CIT FY End Day</label>
+            <input type="number" value={citFyEndDay} onChange={(e) => setCitFyEndDay(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <button onClick={saveTaxSettings} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center justify-center h-10">
             <Save className="h-4 w-4 mr-2" />
             Save
           </button>
+          <div className="min-w-56">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Theme Mode</label>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as 'light' | 'dark' | 'system')}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+            >
+              <option value="system">System (Default)</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+            <p className="text-xs text-gray-500 mt-1">Active theme: {resolvedTheme}</p>
+          </div>
         </div>
       </div>
 
@@ -309,6 +476,38 @@ export default function Settings() {
           <input required type="number" min="0" step="0.01" placeholder="Unit Cost" value={newPo.unit_cost} onChange={(e) => setNewPo({ ...newPo, unit_cost: e.target.value })} className="px-3 py-2 text-sm border rounded-lg" />
           <button type="submit" className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg">Create PO</button>
           <input placeholder="Notes" value={newPo.notes} onChange={(e) => setNewPo({ ...newPo, notes: e.target.value })} className="px-3 py-2 text-sm border rounded-lg md:col-span-5" />
+          <label className="md:col-span-2 flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={newPo.vat_charged} onChange={(e) => setNewPo({ ...newPo, vat_charged: e.target.checked })} />
+            VAT charged by supplier
+          </label>
+          <label className="md:col-span-3 flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={newPo.is_claimable_input_vat} onChange={(e) => setNewPo({ ...newPo, is_claimable_input_vat: e.target.checked })} />
+            Claimable Input VAT
+          </label>
+          <input
+            placeholder="VAT Rate %"
+            value={newPo.vat_rate}
+            onChange={(e) => setNewPo({ ...newPo, vat_rate: e.target.value })}
+            className="px-3 py-2 text-sm border rounded-lg"
+          />
+          <input
+            placeholder="Input VAT Amount (optional)"
+            value={newPo.input_vat_amount}
+            onChange={(e) => setNewPo({ ...newPo, input_vat_amount: e.target.value })}
+            className="px-3 py-2 text-sm border rounded-lg"
+          />
+          <input
+            placeholder="Supplier VAT Invoice No"
+            value={newPo.supplier_vat_invoice_no}
+            onChange={(e) => setNewPo({ ...newPo, supplier_vat_invoice_no: e.target.value })}
+            className="px-3 py-2 text-sm border rounded-lg md:col-span-2"
+          />
+          <input
+            placeholder="Supplier TIN"
+            value={newPo.supplier_tin}
+            onChange={(e) => setNewPo({ ...newPo, supplier_tin: e.target.value })}
+            className="px-3 py-2 text-sm border rounded-lg"
+          />
         </form>
         <div className="space-y-2 max-h-80 overflow-auto">
           {purchaseOrders.map((po) => (

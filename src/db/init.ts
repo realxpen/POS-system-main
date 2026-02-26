@@ -70,6 +70,9 @@ export function initializeDatabase() {
       category TEXT NOT NULL,
       cost_price REAL NOT NULL,
       selling_price REAL NOT NULL,
+      safe_price REAL,
+      standard_price REAL,
+      premium_price REAL,
       quantity INTEGER NOT NULL DEFAULT 0,
       initial_stock INTEGER NOT NULL DEFAULT 0,
       min_threshold INTEGER NOT NULL DEFAULT 5,
@@ -131,6 +134,39 @@ export function initializeDatabase() {
     );
   `);
 
+  // Multi-invoice draft carts (open invoices before checkout)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS draft_invoices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      invoice_code TEXT UNIQUE NOT NULL,
+      customer_name TEXT,
+      status TEXT NOT NULL CHECK(status IN ('open', 'paid', 'cancelled')) DEFAULT 'open',
+      transaction_id INTEGER,
+      invoice_id INTEGER,
+      attendant_id INTEGER NOT NULL,
+      attendant_name TEXT NOT NULL,
+      branch_id INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (attendant_id) REFERENCES users(id)
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS draft_invoice_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      draft_invoice_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      product_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      unit_price REAL NOT NULL,
+      subtotal REAL NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (draft_invoice_id) REFERENCES draft_invoices(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    );
+  `);
+
   // Expenses
   db.exec(`
     CREATE TABLE IF NOT EXISTS expenses (
@@ -144,6 +180,11 @@ export function initializeDatabase() {
       vendor TEXT,
       payment_method TEXT NOT NULL DEFAULT 'cash',
       reference_no TEXT,
+      payee_type TEXT NOT NULL DEFAULT 'none',
+      wht_applicable INTEGER NOT NULL DEFAULT 0,
+      wht_rate REAL NOT NULL DEFAULT 0,
+      wht_amount REAL NOT NULL DEFAULT 0,
+      net_amount REAL NOT NULL DEFAULT 0,
       created_by INTEGER,
       notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -184,6 +225,89 @@ export function initializeDatabase() {
     );
   `);
 
+  // Raw materials / ingredients
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS materials (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      sku TEXT UNIQUE NOT NULL,
+      unit TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 0,
+      min_threshold REAL NOT NULL DEFAULT 0,
+      unit_cost REAL NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS product_recipes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      material_id INTEGER NOT NULL,
+      quantity_required REAL NOT NULL,
+      UNIQUE(product_id, material_id),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+      FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS material_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      material_id INTEGER NOT NULL,
+      change_type TEXT NOT NULL CHECK(change_type IN ('sale_usage', 'restock', 'adjustment', 'spoilage')),
+      quantity_before REAL NOT NULL,
+      quantity_changed REAL NOT NULL,
+      quantity_after REAL NOT NULL,
+      reference_type TEXT,
+      reference_id INTEGER,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (material_id) REFERENCES materials(id)
+    );
+  `);
+
+  // Asset management
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS assets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      category TEXT,
+      purchase_cost REAL NOT NULL DEFAULT 0,
+      purchase_date DATETIME,
+      condition TEXT NOT NULL DEFAULT 'good',
+      maintenance_interval_days INTEGER,
+      expected_lifespan_months INTEGER,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS asset_maintenance_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      asset_id INTEGER NOT NULL,
+      maintenance_date DATETIME NOT NULL,
+      cost REAL NOT NULL DEFAULT 0,
+      description TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Spoilage tracking
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS spoilage_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_type TEXT NOT NULL CHECK(item_type IN ('product', 'material')),
+      item_id INTEGER NOT NULL,
+      quantity REAL NOT NULL,
+      reason TEXT,
+      estimated_loss REAL NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
   // Customers
   db.exec(`
     CREATE TABLE IF NOT EXISTS customers (
@@ -218,6 +342,13 @@ export function initializeDatabase() {
       branch_id INTEGER NOT NULL DEFAULT 1,
       status TEXT NOT NULL CHECK(status IN ('pending', 'received', 'cancelled')) DEFAULT 'pending',
       total_cost REAL NOT NULL DEFAULT 0,
+      total_cost_inc_vat REAL NOT NULL DEFAULT 0,
+      vat_charged INTEGER NOT NULL DEFAULT 0,
+      vat_rate REAL NOT NULL DEFAULT 7.5,
+      input_vat_amount REAL NOT NULL DEFAULT 0,
+      supplier_vat_invoice_no TEXT,
+      supplier_tin TEXT,
+      is_claimable_input_vat INTEGER NOT NULL DEFAULT 1,
       notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
@@ -288,6 +419,22 @@ export function initializeDatabase() {
     db.exec('ALTER TABLE expenses ADD COLUMN updated_at DATETIME');
     db.exec("UPDATE expenses SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL");
   }
+  if (!hasColumn('expenses', 'payee_type')) {
+    db.exec("ALTER TABLE expenses ADD COLUMN payee_type TEXT NOT NULL DEFAULT 'none'");
+  }
+  if (!hasColumn('expenses', 'wht_applicable')) {
+    db.exec('ALTER TABLE expenses ADD COLUMN wht_applicable INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn('expenses', 'wht_rate')) {
+    db.exec('ALTER TABLE expenses ADD COLUMN wht_rate REAL NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn('expenses', 'wht_amount')) {
+    db.exec('ALTER TABLE expenses ADD COLUMN wht_amount REAL NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn('expenses', 'net_amount')) {
+    db.exec('ALTER TABLE expenses ADD COLUMN net_amount REAL NOT NULL DEFAULT 0');
+    db.exec('UPDATE expenses SET net_amount = amount WHERE net_amount = 0');
+  }
   if (!hasColumn('transactions', 'invoice_number')) {
     db.exec('ALTER TABLE transactions ADD COLUMN invoice_number TEXT');
   }
@@ -303,11 +450,51 @@ export function initializeDatabase() {
   if (!hasColumn('products', 'branch_id')) {
     db.exec('ALTER TABLE products ADD COLUMN branch_id INTEGER NOT NULL DEFAULT 1');
   }
+  if (!hasColumn('products', 'safe_price')) {
+    db.exec('ALTER TABLE products ADD COLUMN safe_price REAL');
+    db.exec('UPDATE products SET safe_price = cost_price WHERE safe_price IS NULL');
+  }
+  if (!hasColumn('products', 'standard_price')) {
+    db.exec('ALTER TABLE products ADD COLUMN standard_price REAL');
+    db.exec('UPDATE products SET standard_price = selling_price WHERE standard_price IS NULL');
+  }
+  if (!hasColumn('products', 'premium_price')) {
+    db.exec('ALTER TABLE products ADD COLUMN premium_price REAL');
+    db.exec('UPDATE products SET premium_price = selling_price * 1.2 WHERE premium_price IS NULL');
+  }
   if (!hasColumn('transactions', 'customer_id')) {
     db.exec('ALTER TABLE transactions ADD COLUMN customer_id INTEGER');
   }
   if (!hasColumn('transactions', 'branch_id')) {
     db.exec('ALTER TABLE transactions ADD COLUMN branch_id INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!hasColumn('purchase_orders', 'total_cost_inc_vat')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN total_cost_inc_vat REAL NOT NULL DEFAULT 0');
+    db.exec('UPDATE purchase_orders SET total_cost_inc_vat = total_cost WHERE total_cost_inc_vat = 0');
+  }
+  if (!hasColumn('purchase_orders', 'vat_charged')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN vat_charged INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn('purchase_orders', 'vat_rate')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN vat_rate REAL NOT NULL DEFAULT 7.5');
+  }
+  if (!hasColumn('purchase_orders', 'input_vat_amount')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN input_vat_amount REAL NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn('purchase_orders', 'supplier_vat_invoice_no')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN supplier_vat_invoice_no TEXT');
+  }
+  if (!hasColumn('purchase_orders', 'supplier_tin')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN supplier_tin TEXT');
+  }
+  if (!hasColumn('purchase_orders', 'is_claimable_input_vat')) {
+    db.exec('ALTER TABLE purchase_orders ADD COLUMN is_claimable_input_vat INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!hasColumn('draft_invoices', 'transaction_id')) {
+    db.exec('ALTER TABLE draft_invoices ADD COLUMN transaction_id INTEGER');
+  }
+  if (!hasColumn('draft_invoices', 'invoice_id')) {
+    db.exec('ALTER TABLE draft_invoices ADD COLUMN invoice_id INTEGER');
   }
 
   // Seed Tax Rate if not exists
@@ -315,10 +502,41 @@ export function initializeDatabase() {
   if (!taxCheck) {
     db.prepare("INSERT INTO settings (key, value) VALUES ('tax_rate', '7.5')").run();
   }
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('vat_rate', '7.5')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('paye_rate', '10')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('paye_brackets_json', '[{\"up_to\":800000,\"rate\":0},{\"up_to\":3000000,\"rate\":15},{\"up_to\":12000000,\"rate\":18},{\"up_to\":25000000,\"rate\":21},{\"up_to\":50000000,\"rate\":23},{\"up_to\":null,\"rate\":25}]')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('wht_individual_rate', '5')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('wht_company_rate', '10')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('cit_small_turnover_max', '25000000')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('cit_medium_turnover_max', '100000000')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('cit_small_rate', '0')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('cit_medium_rate', '20')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('cit_large_rate', '30')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('tax_reminder_days_before', '7')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('monthly_vat_due_day', '21')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('monthly_paye_due_day', '10')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('monthly_wht_due_day', '21')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('annual_tax_return_month', '3')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('annual_tax_return_day', '31')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('cit_fy_end_month', '12')").run();
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('cit_fy_end_day', '31')").run();
 
   // Nigeria-first default migration for legacy installs that still use 10%
   if (taxCheck && String((taxCheck as any).value) === '10') {
     db.prepare("UPDATE settings SET value = '7.5' WHERE key = 'tax_rate'").run();
+  }
+
+  // Guardrail: in Nigeria-first mode, VAT should not keep legacy CIT-like rates (e.g. 20/30)
+  const vatRow = db.prepare("SELECT value FROM settings WHERE key = 'vat_rate'").get() as any;
+  const legacyVat = vatRow ? Number(vatRow.value) : NaN;
+  if (!Number.isFinite(legacyVat) || legacyVat <= 0 || legacyVat > 15) {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('vat_rate', '7.5')").run();
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('tax_rate', '7.5')").run();
+    db.prepare(`
+      INSERT INTO tax_settings (id, tax_rate, updated_at)
+      VALUES (1, 7.5, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET tax_rate = 7.5, updated_at = CURRENT_TIMESTAMP
+    `).run();
   }
 
   const effectiveTax = db.prepare("SELECT value FROM settings WHERE key = 'tax_rate'").get() as any;

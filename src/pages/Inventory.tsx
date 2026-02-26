@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { formatCurrency } from '../lib/utils';
-import { Plus, Search, Edit, Trash2, AlertCircle } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, AlertCircle, Printer, Calculator } from 'lucide-react';
 
 interface Product {
   id: number;
@@ -17,12 +17,86 @@ interface Product {
   stock_status?: 'healthy' | 'low_stock' | 'out_of_stock';
 }
 
+interface Material {
+  id: number;
+  name: string;
+  unit: string;
+  unit_cost: number;
+}
+
+interface CateringIngredientRow {
+  material_id: string;
+  name: string;
+  quantity: string;
+  unit_cost: string;
+}
+
+interface CateringResult {
+  inputs: {
+    guests: number;
+    portion_factor: 'light' | 'normal' | 'heavy';
+    target_margin_pct: number;
+  };
+  ingredients: Array<{ name: string; quantity: number; unit_cost: number; total_cost: number }>;
+  breakdown: {
+    ingredient_total: number;
+    packaging_total: number;
+    labor_total: number;
+    transport_total: number;
+    fuel_total: number;
+    venue_service_total: number;
+    total_cost_before_contingency: number;
+    contingency_amount: number;
+    final_total_cost: number;
+    cost_per_plate: number;
+  };
+  pricing: {
+    safe_per_plate: number;
+    standard_per_plate: number;
+    premium_per_plate: number;
+    suggested_per_plate: number;
+    total_quote: number;
+    expected_profit: number;
+  };
+}
+
 export default function Inventory() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [costingLoading, setCostingLoading] = useState(false);
+  const [costingForm, setCostingForm] = useState({
+    item_type: 'product',
+    direct_cost: '',
+    hours: '',
+    hourly_rate: '',
+    operating_share: '',
+    risk_buffer_pct: '10',
+    target_margin_pct: '35',
+  });
+  const [costingResult, setCostingResult] = useState<any | null>(null);
+  const [cateringLoading, setCateringLoading] = useState(false);
+  const [cateringResult, setCateringResult] = useState<CateringResult | null>(null);
+  const [cateringClient, setCateringClient] = useState('');
+  const [cateringEventName, setCateringEventName] = useState('');
+  const [cateringDate, setCateringDate] = useState(new Date().toISOString().slice(0, 10));
+  const [cateringForm, setCateringForm] = useState({
+    guests: '',
+    portion_factor: 'normal',
+    packaging_per_plate: '',
+    labor_total: '',
+    transport_total: '',
+    fuel_total: '',
+    venue_service_total: '',
+    contingency_pct: '10',
+    target_margin_pct: '35',
+  });
+  const [cateringIngredients, setCateringIngredients] = useState<CateringIngredientRow[]>([
+    { material_id: '', name: '', quantity: '', unit_cost: '' },
+  ]);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -48,8 +122,20 @@ export default function Inventory() {
     }
   };
 
+  const fetchMaterials = async () => {
+    try {
+      const res = await fetch('/api/materials');
+      const data = await res.json();
+      setMaterials(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error fetching materials:', error);
+      setMaterials([]);
+    }
+  };
+
   useEffect(() => {
     fetchProducts();
+    fetchMaterials();
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -106,6 +192,128 @@ export default function Inventory() {
     (p.barcode || '').toLowerCase().includes(search.toLowerCase())
   );
 
+  const runQuickCosting = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCostingLoading(true);
+    try {
+      const res = await fetch('/api/costing/quick-estimate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(costingForm),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to estimate costing');
+        return;
+      }
+      setCostingResult(data);
+    } finally {
+      setCostingLoading(false);
+    }
+  };
+
+  const addCateringIngredient = () => {
+    setCateringIngredients((prev) => [...prev, { material_id: '', name: '', quantity: '', unit_cost: '' }]);
+  };
+
+  const removeCateringIngredient = (index: number) => {
+    setCateringIngredients((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateCateringIngredient = (index: number, patch: Partial<CateringIngredientRow>) => {
+    setCateringIngredients((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  };
+
+  const selectMaterialForIngredient = (index: number, materialId: string) => {
+    if (!materialId) {
+      updateCateringIngredient(index, { material_id: '', name: '', unit_cost: '' });
+      return;
+    }
+    const selected = materials.find((m) => String(m.id) === materialId);
+    updateCateringIngredient(index, {
+      material_id: materialId,
+      name: selected?.name || '',
+      unit_cost: selected ? String(selected.unit_cost ?? 0) : '',
+    });
+  };
+
+  const runCateringCosting = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCateringLoading(true);
+    try {
+      const payload = {
+        ...cateringForm,
+        ingredients: cateringIngredients
+          .filter((row) => row.name.trim() && Number(row.quantity || 0) > 0)
+          .map((row) => ({
+            name: row.name.trim(),
+            quantity: Number(row.quantity || 0),
+            unit_cost: Number(row.unit_cost || 0),
+          })),
+      };
+      const res = await fetch('/api/costing/catering-estimate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to calculate catering estimate');
+        return;
+      }
+      setCateringResult(data);
+    } finally {
+      setCateringLoading(false);
+    }
+  };
+
+  const printCateringQuote = () => {
+    if (!cateringResult) return;
+    const popup = window.open('', '_blank', 'width=900,height=1000');
+    if (!popup) return;
+    const rows = cateringResult.ingredients
+      .map((i) => `<tr><td>${i.name}</td><td style="text-align:right">${i.quantity}</td><td style="text-align:right">${formatCurrency(i.unit_cost)}</td><td style="text-align:right">${formatCurrency(i.total_cost)}</td></tr>`)
+      .join('');
+
+    popup.document.write(`
+      <html>
+        <head>
+          <title>Catering Quote</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111827; }
+            h1, h2 { margin: 0 0 8px; }
+            .muted { color: #6b7280; font-size: 12px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+            th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 13px; }
+            th { background: #f3f4f6; text-align: left; }
+            .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; margin-top: 16px; }
+            .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+            .right { text-align: right; }
+          </style>
+        </head>
+        <body>
+          <h1>Catering Quote Summary</h1>
+          <p class="muted">Client: ${cateringClient || 'N/A'} | Event: ${cateringEventName || 'N/A'} | Date: ${cateringDate}</p>
+          <table>
+            <thead><tr><th>Ingredient</th><th class="right">Qty</th><th class="right">Unit Cost</th><th class="right">Total</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="4">No ingredients listed</td></tr>'}</tbody>
+          </table>
+          <div class="grid">
+            <div class="card">Guests: <b>${cateringResult.inputs.guests}</b></div>
+            <div class="card">Cost / Plate: <b>${formatCurrency(cateringResult.breakdown.cost_per_plate)}</b></div>
+            <div class="card">Suggested / Plate: <b>${formatCurrency(cateringResult.pricing.suggested_per_plate)}</b></div>
+            <div class="card">Total Quote: <b>${formatCurrency(cateringResult.pricing.total_quote)}</b></div>
+            <div class="card">Final Total Cost: <b>${formatCurrency(cateringResult.breakdown.final_total_cost)}</b></div>
+            <div class="card">Expected Profit: <b>${formatCurrency(cateringResult.pricing.expected_profit)}</b></div>
+          </div>
+        </body>
+      </html>
+    `);
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -120,6 +328,154 @@ export default function Inventory() {
           <Plus className="h-5 w-5 mr-2" />
           Add Product
         </button>
+      </div>
+
+      <div className="panel-card rounded-2xl p-5">
+        <h3 className="text-lg font-semibold text-gray-900">Quick Costing Wizard (Unknown Product/Service)</h3>
+        <p className="text-sm text-gray-500 mt-1">Use fallback costing when exact recipe/material details are not ready.</p>
+        <form onSubmit={runQuickCosting} className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Type</label>
+            <select
+              value={costingForm.item_type}
+              onChange={(e) => setCostingForm({ ...costingForm, item_type: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+            >
+              <option value="product">Product</option>
+              <option value="service">Service</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Direct Cost (NGN)</label>
+            <input type="number" step="0.01" value={costingForm.direct_cost} onChange={(e) => setCostingForm({ ...costingForm, direct_cost: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Hours Spent</label>
+            <input type="number" step="0.01" value={costingForm.hours} onChange={(e) => setCostingForm({ ...costingForm, hours: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Hourly Rate (NGN)</label>
+            <input type="number" step="0.01" value={costingForm.hourly_rate} onChange={(e) => setCostingForm({ ...costingForm, hourly_rate: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Operating Share (NGN)</label>
+            <input type="number" step="0.01" value={costingForm.operating_share} onChange={(e) => setCostingForm({ ...costingForm, operating_share: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Risk Buffer %</label>
+            <input type="number" step="0.01" value={costingForm.risk_buffer_pct} onChange={(e) => setCostingForm({ ...costingForm, risk_buffer_pct: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Target Margin %</label>
+            <input type="number" step="0.01" value={costingForm.target_margin_pct} onChange={(e) => setCostingForm({ ...costingForm, target_margin_pct: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div className="flex items-end">
+            <button type="submit" disabled={costingLoading} className="w-full px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:bg-slate-400">
+              {costingLoading ? 'Calculating...' : 'Calculate Price'}
+            </button>
+          </div>
+        </form>
+        {costingResult && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs text-gray-500">Base Cost</p>
+              <p className="font-semibold text-gray-900">{formatCurrency(costingResult.breakdown.base_cost || 0)}</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs text-gray-500">Safe Price</p>
+              <p className="font-semibold text-emerald-700">{formatCurrency(costingResult.pricing.safe || 0)}</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs text-gray-500">Standard Price</p>
+              <p className="font-semibold text-indigo-700">{formatCurrency(costingResult.pricing.standard || 0)}</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs text-gray-500">Premium Price</p>
+              <p className="font-semibold text-violet-700">{formatCurrency(costingResult.pricing.premium || 0)}</p>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs text-gray-500">By Target Margin</p>
+              <p className="font-semibold text-cyan-700">{formatCurrency(costingResult.pricing.suggested_by_target_margin || 0)}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="panel-card rounded-2xl p-5">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <Calculator className="h-5 w-5" />
+              Catering Cost Calculator
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">Per plate + event quote for weddings, parties, and bulk catering.</p>
+          </div>
+          <button
+            type="button"
+            onClick={printCateringQuote}
+            disabled={!cateringResult}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white disabled:opacity-50 inline-flex items-center gap-2"
+          >
+            <Printer className="h-4 w-4" />
+            Print Quote
+          </button>
+        </div>
+
+        <form onSubmit={runCateringCosting} className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <input placeholder="Client name (optional)" value={cateringClient} onChange={(e) => setCateringClient(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <input placeholder="Event name (optional)" value={cateringEventName} onChange={(e) => setCateringEventName(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <input type="date" value={cateringDate} onChange={(e) => setCateringDate(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <input placeholder="Guests" type="number" min="1" value={cateringForm.guests} onChange={(e) => setCateringForm({ ...cateringForm, guests: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <select value={cateringForm.portion_factor} onChange={(e) => setCateringForm({ ...cateringForm, portion_factor: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg">
+            <option value="light">Light</option>
+            <option value="normal">Normal</option>
+            <option value="heavy">Heavy</option>
+          </select>
+          <input placeholder="Packaging / plate" type="number" step="0.01" value={cateringForm.packaging_per_plate} onChange={(e) => setCateringForm({ ...cateringForm, packaging_per_plate: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <input placeholder="Labor total" type="number" step="0.01" value={cateringForm.labor_total} onChange={(e) => setCateringForm({ ...cateringForm, labor_total: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <input placeholder="Transport / logistics" type="number" step="0.01" value={cateringForm.transport_total} onChange={(e) => setCateringForm({ ...cateringForm, transport_total: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <input placeholder="Fuel / gas" type="number" step="0.01" value={cateringForm.fuel_total} onChange={(e) => setCateringForm({ ...cateringForm, fuel_total: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <input placeholder="Venue / service cost" type="number" step="0.01" value={cateringForm.venue_service_total} onChange={(e) => setCateringForm({ ...cateringForm, venue_service_total: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <input placeholder="Contingency %" type="number" step="0.01" value={cateringForm.contingency_pct} onChange={(e) => setCateringForm({ ...cateringForm, contingency_pct: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <input placeholder="Target margin %" type="number" step="0.01" value={cateringForm.target_margin_pct} onChange={(e) => setCateringForm({ ...cateringForm, target_margin_pct: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg" />
+          <button type="submit" disabled={cateringLoading} className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:bg-slate-400">
+            {cateringLoading ? 'Calculating...' : 'Calculate Catering Quote'}
+          </button>
+        </form>
+
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold text-gray-900">Ingredients</h4>
+            <button type="button" onClick={addCateringIngredient} className="text-xs px-2 py-1 border border-gray-300 rounded">Add Ingredient</button>
+          </div>
+          <div className="space-y-2">
+            {cateringIngredients.map((row, index) => (
+              <div key={index} className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                <select value={row.material_id} onChange={(e) => selectMaterialForIngredient(index, e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                  <option value="">Pick material (optional)</option>
+                  {materials.map((m) => (
+                    <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>
+                  ))}
+                </select>
+                <input placeholder="Ingredient name" value={row.name} onChange={(e) => updateCateringIngredient(index, { name: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                <input placeholder="Quantity needed" type="number" step="0.01" value={row.quantity} onChange={(e) => updateCateringIngredient(index, { quantity: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                <input placeholder="Unit cost" type="number" step="0.01" value={row.unit_cost} onChange={(e) => updateCateringIngredient(index, { unit_cost: e.target.value })} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                <button type="button" onClick={() => removeCateringIngredient(index)} className="px-3 py-2 border border-red-300 text-red-600 rounded-lg text-sm">Remove</button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {cateringResult && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
+            <div className="bg-white border border-slate-200 rounded-xl p-3"><p className="text-xs text-gray-500">Cost / Plate</p><p className="font-semibold">{formatCurrency(cateringResult.breakdown.cost_per_plate)}</p></div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3"><p className="text-xs text-gray-500">Safe / Plate</p><p className="font-semibold text-emerald-700">{formatCurrency(cateringResult.pricing.safe_per_plate)}</p></div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3"><p className="text-xs text-gray-500">Standard / Plate</p><p className="font-semibold text-indigo-700">{formatCurrency(cateringResult.pricing.standard_per_plate)}</p></div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3"><p className="text-xs text-gray-500">Premium / Plate</p><p className="font-semibold text-violet-700">{formatCurrency(cateringResult.pricing.premium_per_plate)}</p></div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3"><p className="text-xs text-gray-500">Total Quote</p><p className="font-semibold text-cyan-700">{formatCurrency(cateringResult.pricing.total_quote)}</p></div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3"><p className="text-xs text-gray-500">Expected Profit</p><p className="font-semibold text-amber-700">{formatCurrency(cateringResult.pricing.expected_profit)}</p></div>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">

@@ -6,7 +6,10 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 type FinancialSummary = {
   revenue: { today: number; month: number };
   expenses: { today: number; month: number };
-  tax: { rate: number; today: number; month: number };
+  vat: { rate: number; today: number; month: number };
+  cit: { rate: number; today_estimate: number; month_estimate: number; ytd_estimate: number };
+  paye: { rate: number; today_estimate: number; month_estimate: number };
+  wht?: { today: number; month: number; ytd?: number };
   profit: { today: number; month: number };
 };
 
@@ -34,12 +37,13 @@ export default function Reports() {
   const [unsoldProducts, setUnsoldProducts] = useState<any[]>([]);
   const [creditSales, setCreditSales] = useState<any[]>([]);
   const [revenueModule, setRevenueModule] = useState<RevenueModuleData | null>(null);
+  const [vatPosition, setVatPosition] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [txRes, perfRes, finRes, salesRes, profitProdRes, unsoldRes, creditRes, revenueRes] = await Promise.all([
+        const [txRes, perfRes, finRes, salesRes, profitProdRes, unsoldRes, creditRes, revenueRes, vatRes] = await Promise.all([
           fetch('/api/transactions'),
           fetch('/api/reports/attendant-performance'),
           fetch('/api/reports/financial-summary'),
@@ -48,9 +52,10 @@ export default function Reports() {
           fetch('/api/reports/products/not-sold-30-days'),
           fetch('/api/reports/credit-sales'),
           fetch('/api/reports/revenue-module'),
+          fetch('/api/reports/vat-position'),
         ]);
 
-        const [txData, perfData, finData, salesChart, profitProdData, unsoldData, creditData, revenueData] = await Promise.all([
+        const [txData, perfData, finData, salesChart, profitProdData, unsoldData, creditData, revenueData, vatData] = await Promise.all([
           txRes.json(),
           perfRes.json(),
           finRes.json(),
@@ -59,6 +64,7 @@ export default function Reports() {
           unsoldRes.json(),
           creditRes.json(),
           revenueRes.json(),
+          vatRes.json(),
         ]);
 
         setTransactions(txData);
@@ -69,6 +75,7 @@ export default function Reports() {
         setUnsoldProducts(unsoldData);
         setCreditSales(creditData);
         setRevenueModule(revenueData);
+        setVatPosition(vatData);
       } catch (error) {
         console.error('Error fetching reports:', error);
       } finally {
@@ -118,7 +125,7 @@ export default function Reports() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 stagger">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-4 stagger">
         <div className="panel-card p-5 rounded-2xl">
           <p className="text-xs text-gray-500">Revenue (Month)</p>
           <p className="text-xl font-bold text-gray-900 mt-1">{formatCurrency(financials?.revenue.month || 0)}</p>
@@ -128,8 +135,20 @@ export default function Reports() {
           <p className="text-xl font-bold text-gray-900 mt-1">{formatCurrency(financials?.expenses.month || 0)}</p>
         </div>
         <div className="panel-card p-5 rounded-2xl">
-          <p className="text-xs text-gray-500">Tax Payable (Month)</p>
-          <p className="text-xl font-bold text-gray-900 mt-1">{formatCurrency(financials?.tax.month || 0)}</p>
+          <p className="text-xs text-gray-500">VAT Payable (Month)</p>
+          <p className="text-xl font-bold text-gray-900 mt-1">{formatCurrency(financials?.vat.month || 0)}</p>
+        </div>
+        <div className="panel-card p-5 rounded-2xl">
+          <p className="text-xs text-gray-500">CIT Estimate (Month)</p>
+          <p className="text-xl font-bold text-gray-900 mt-1">{formatCurrency(financials?.cit.month_estimate || 0)}</p>
+        </div>
+        <div className="panel-card p-5 rounded-2xl">
+          <p className="text-xs text-gray-500">PAYE Estimate (Month)</p>
+          <p className="text-xl font-bold text-gray-900 mt-1">{formatCurrency(financials?.paye.month_estimate || 0)}</p>
+        </div>
+        <div className="panel-card p-5 rounded-2xl">
+          <p className="text-xs text-gray-500">WHT (Month)</p>
+          <p className="text-xl font-bold text-gray-900 mt-1">{formatCurrency(financials?.wht?.month || 0)}</p>
         </div>
         <div className="panel-card p-5 rounded-2xl">
           <p className="text-xs text-gray-500">Profit (Month)</p>
@@ -213,6 +232,32 @@ export default function Reports() {
               ))}
               {(revenueModule?.revenue_per_attendant || []).length === 0 && <p className="text-sm text-gray-500">No attendant revenue yet.</p>}
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel-card rounded-2xl p-6">
+        <h3 className="text-lg font-semibold text-gray-900">VAT Position (This Month)</h3>
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="bg-white/70 border border-slate-200 rounded-xl p-3">
+            <p className="text-xs text-gray-500">Output VAT</p>
+            <p className="text-lg font-semibold text-gray-900">{formatCurrency(vatPosition?.output_vat || 0)}</p>
+          </div>
+          <div className="bg-white/70 border border-slate-200 rounded-xl p-3">
+            <p className="text-xs text-gray-500">Input VAT (Total)</p>
+            <p className="text-lg font-semibold text-gray-900">{formatCurrency(vatPosition?.input_vat_total || 0)}</p>
+          </div>
+          <div className="bg-white/70 border border-slate-200 rounded-xl p-3">
+            <p className="text-xs text-gray-500">Input VAT (Claimable)</p>
+            <p className="text-lg font-semibold text-gray-900">{formatCurrency(vatPosition?.input_vat_claimable || 0)}</p>
+          </div>
+          <div className="bg-white/70 border border-slate-200 rounded-xl p-3">
+            <p className="text-xs text-gray-500">VAT Payable / Credit</p>
+            <p className="text-lg font-semibold text-gray-900">
+              {vatPosition?.vat_payable >= 0
+                ? formatCurrency(vatPosition?.vat_payable || 0)
+                : `Credit ${formatCurrency(vatPosition?.vat_credit || 0)}`}
+            </p>
           </div>
         </div>
       </div>

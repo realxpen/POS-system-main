@@ -17,6 +17,11 @@ import supplierRoutes from './src/api/suppliers';
 import branchRoutes from './src/api/branches';
 import purchaseOrderRoutes from './src/api/purchaseOrders';
 import creditSaleRoutes from './src/api/creditSales';
+import draftInvoiceRoutes from './src/api/draftInvoices';
+import materialRoutes from './src/api/materials';
+import assetRoutes from './src/api/assets';
+import spoilageRoutes from './src/api/spoilage';
+import costingRoutes from './src/api/costing';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,6 +53,11 @@ async function startServer() {
   app.use('/api/branches', branchRoutes);
   app.use('/api/purchase-orders', purchaseOrderRoutes);
   app.use('/api/credit-sales', creditSaleRoutes);
+  app.use('/api/draft-invoices', draftInvoiceRoutes);
+  app.use('/api/materials', materialRoutes);
+  app.use('/api/assets', assetRoutes);
+  app.use('/api/spoilage', spoilageRoutes);
+  app.use('/api/costing', costingRoutes);
 
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

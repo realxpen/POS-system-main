@@ -10,6 +10,8 @@ import Inventory from './pages/Inventory';
 import Expenses from './pages/Expenses';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
+import Notifications from './pages/Notifications';
+import PrintInvoice from './pages/PrintInvoice';
 
 function RoleRoute({ roles, children }: { roles: Array<'admin' | 'manager' | 'attendant'>; children: ReactElement }) {
   const { user } = useAuth();
@@ -23,6 +25,7 @@ export default function App() {
     <AuthProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/print-invoice/:id" element={<PrintInvoice />} />
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/sales" element={<Sales />} />
@@ -42,6 +45,7 @@ export default function App() {
             path="/settings"
             element={<RoleRoute roles={['admin']}><Settings /></RoleRoute>}
           />
+          <Route path="/notifications" element={<Notifications />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -6,6 +6,55 @@ const router = Router();
 router.use(authenticate);
 router.use(authorize(['admin', 'manager']));
 
+const toNumber = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const getNumberSetting = (db: ReturnType<typeof getDb>, key: string, fallback: number) => {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value?: string } | undefined;
+  return toNumber(row?.value, fallback);
+};
+
+const WHT_CATEGORIES = new Set(['service', 'services', 'rent', 'contract', 'professional', 'consulting', 'management']);
+
+const computeWhtFields = (
+  db: ReturnType<typeof getDb>,
+  amount: number,
+  category: string,
+  payeeTypeInput: string | null | undefined,
+  whtApplicableInput: unknown,
+  whtRateInput: unknown,
+) => {
+  const payeeType = ['individual', 'company'].includes(String(payeeTypeInput || '').toLowerCase())
+    ? String(payeeTypeInput).toLowerCase()
+    : 'none';
+
+  const categoryKey = String(category || '').trim().toLowerCase();
+  const autoApplicable = payeeType !== 'none' && WHT_CATEGORIES.has(categoryKey);
+  const explicitApplicable = whtApplicableInput === true || whtApplicableInput === 1 || whtApplicableInput === '1';
+  const whtApplicable = explicitApplicable || autoApplicable;
+
+  const defaultRate = payeeType === 'company'
+    ? getNumberSetting(db, 'wht_company_rate', 10)
+    : payeeType === 'individual'
+      ? getNumberSetting(db, 'wht_individual_rate', 5)
+      : 0;
+
+  const rawRate = toNumber(whtRateInput, defaultRate);
+  const whtRate = whtApplicable ? Math.max(0, rawRate) : 0;
+  const whtAmount = whtApplicable ? amount * (whtRate / 100) : 0;
+  const netAmount = amount - whtAmount;
+
+  return {
+    payee_type: payeeType,
+    wht_applicable: whtApplicable ? 1 : 0,
+    wht_rate: whtRate,
+    wht_amount: whtAmount,
+    net_amount: netAmount,
+  };
+};
+
 router.get('/', (req, res) => {
   const db = getDb();
   const month = String(req.query.month || '').trim(); // YYYY-MM
@@ -50,11 +99,13 @@ router.get('/summary', (req, res) => {
   const summary = db.prepare(`
     SELECT
       COALESCE(SUM(CASE WHEN strftime('%Y-%m', date) = ? THEN amount END), 0) as total_month,
+      COALESCE(SUM(CASE WHEN strftime('%Y-%m', date) = ? THEN wht_amount END), 0) as total_wht_month,
+      COALESCE(SUM(CASE WHEN strftime('%Y-%m', date) = ? THEN net_amount END), 0) as total_net_month,
       COALESCE(SUM(CASE WHEN date(date) = date('now') THEN amount END), 0) as total_today,
       COALESCE(SUM(CASE WHEN is_recurring = 1 AND strftime('%Y-%m', date) = ? THEN amount END), 0) as recurring_month,
       COALESCE(COUNT(CASE WHEN is_recurring = 1 AND strftime('%Y-%m', date) = ? THEN 1 END), 0) as recurring_count
     FROM expenses
-  `).get(month, month, month) as any;
+  `).get(month, month, month, month, month) as any;
 
   const byCategory = db.prepare(`
     SELECT category, COALESCE(SUM(amount), 0) as total
@@ -83,6 +134,11 @@ router.get('/report', (req, res) => {
       vendor,
       payment_method,
       reference_no,
+      payee_type,
+      wht_applicable,
+      wht_rate,
+      wht_amount,
+      net_amount,
       notes
     FROM expenses
     WHERE strftime('%Y-%m', date) = ?
@@ -93,7 +149,7 @@ router.get('/report', (req, res) => {
 });
 
 router.post('/', (req, res) => {
-  const { title, category, amount, date, notes, is_recurring, recurring_interval, vendor, payment_method, reference_no } = req.body;
+  const { title, category, amount, date, notes, is_recurring, recurring_interval, vendor, payment_method, reference_no, payee_type, wht_applicable, wht_rate } = req.body;
   const db = getDb();
 
   const cleanTitle = String(title || '').trim();
@@ -106,13 +162,14 @@ router.post('/', (req, res) => {
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) return res.status(400).json({ error: 'Amount must be greater than 0' });
   if (!cleanDate) return res.status(400).json({ error: 'Date is required' });
 
+  const wht = computeWhtFields(db, numericAmount, cleanCategory, payee_type, wht_applicable, wht_rate);
+
   try {
     const stmt = db.prepare(`
       INSERT INTO expenses (
         title, category, amount, date, is_recurring, recurring_interval,
-        vendor, payment_method, reference_no, created_by, notes, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        vendor, payment_method, reference_no, payee_type, wht_applicable, wht_rate, wht_amount, net_amount, created_by, notes, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `);
     const info = stmt.run(
       cleanTitle,
@@ -124,10 +181,15 @@ router.post('/', (req, res) => {
       vendor ? String(vendor).trim() : null,
       payment_method ? String(payment_method).toLowerCase() : 'cash',
       reference_no ? String(reference_no).trim() : null,
+      wht.payee_type,
+      wht.wht_applicable,
+      wht.wht_rate,
+      wht.wht_amount,
+      wht.net_amount,
       req.user?.id || null,
       notes ? String(notes).trim() : null,
     );
-    res.json({ id: info.lastInsertRowid, ...req.body });
+    res.json({ id: info.lastInsertRowid, ...req.body, ...wht });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -135,7 +197,7 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   const { id } = req.params;
-  const { title, category, amount, date, notes, is_recurring, recurring_interval, vendor, payment_method, reference_no } = req.body;
+  const { title, category, amount, date, notes, is_recurring, recurring_interval, vendor, payment_method, reference_no, payee_type, wht_applicable, wht_rate } = req.body;
   const db = getDb();
 
   const cleanTitle = String(title || '').trim();
@@ -147,6 +209,8 @@ router.put('/:id', (req, res) => {
   if (!cleanCategory) return res.status(400).json({ error: 'Category is required' });
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) return res.status(400).json({ error: 'Amount must be greater than 0' });
   if (!cleanDate) return res.status(400).json({ error: 'Date is required' });
+
+  const wht = computeWhtFields(db, numericAmount, cleanCategory, payee_type, wht_applicable, wht_rate);
 
   try {
     const info = db.prepare(`
@@ -161,6 +225,11 @@ router.put('/:id', (req, res) => {
         vendor = ?,
         payment_method = ?,
         reference_no = ?,
+        payee_type = ?,
+        wht_applicable = ?,
+        wht_rate = ?,
+        wht_amount = ?,
+        net_amount = ?,
         notes = ?,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -174,6 +243,11 @@ router.put('/:id', (req, res) => {
       vendor ? String(vendor).trim() : null,
       payment_method ? String(payment_method).toLowerCase() : 'cash',
       reference_no ? String(reference_no).trim() : null,
+      wht.payee_type,
+      wht.wht_applicable,
+      wht.wht_rate,
+      wht.wht_amount,
+      wht.net_amount,
       notes ? String(notes).trim() : null,
       id,
     );
